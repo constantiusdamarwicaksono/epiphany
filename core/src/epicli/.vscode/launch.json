@@ -5,15 +5,47 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "debug init file",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "init",
+                "-p","any",
+                "-n","test"
+            ]
+        },
+        {
+            "name": "debug apply file",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "apply",
+                "-f","${workspaceFolder}/test/test.yml",
+                "--no-infra",
+                "--vault-password","abc",
+                "--no-copy-res"
+            ]
+        },
+        {
             "name": "epicli",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/cli/epicli.py",
             "cwd": "${workspaceFolder}",
             "pythonPath": "${config:python.pythonPath}",
-            "env": { "PYTHONPATH": "${workspaceFolder}" },
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
             "console": "integratedTerminal",
-            "args": ["apply", "-f", "${workspaceFolder}/clusters/YOUR_DATA_YAML.yml"]
+            "args": [
+                "apply",
+                "-f",
+                "${workspaceFolder}/clusters/YOUR_DATA_YAML.yml"
+            ]
             // "args": ["apply", "-f", "${workspaceFolder}/clusters/YOUR_DATA_YAML.yml", "--offline-requirements", "${workspaceFolder}/downloads/epirepo"]
             // "args": ["delete", "-b", "${workspaceFolder}/clusters/build/dir"]
             // "args": ["init", "-p", "PROVIDER", "-n", "NAME"]
@@ -25,9 +57,13 @@
             "program": "${workspaceFolder}/run-tests.py",
             "cwd": "${workspaceFolder}",
             "pythonPath": "${config:python.pythonPath}",
-            "env": { "PYTHONPATH": "${workspaceFolder}" },
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
             "console": "integratedTerminal",
-            "args": ["python"]
+            "args": [
+                "python"
+            ]
         },
         {
             "name": "server spec tests",
@@ -36,9 +72,19 @@
             "program": "${workspaceFolder}/run-tests.py",
             "cwd": "${workspaceFolder}",
             "pythonPath": "${config:python.pythonPath}",
-            "env": { "PYTHONPATH": "${workspaceFolder}" },
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
             "console": "integratedTerminal",
-            "args": ["spec", "-i", "${workspaceFolder}/PATH_TO_CLUSTER_INVENTORY", "-u", "ADMIN_USER", "-k", "${workspaceFolder}/PATH_TO_SSH_KEY"]
+            "args": [
+                "spec",
+                "-i",
+                "${workspaceFolder}/PATH_TO_CLUSTER_INVENTORY",
+                "-u",
+                "ADMIN_USER",
+                "-k",
+                "${workspaceFolder}/PATH_TO_SSH_KEY"
+            ]
         }
-    ]	
+    ]
 }

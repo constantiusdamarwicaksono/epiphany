@@ -18,13 +18,15 @@ from cli.helpers.Config import Config
 class AnsibleRunner(Step):
     ANSIBLE_PLAYBOOKS_PATH = DATA_FOLDER_PATH + '/common/ansible/playbooks/'
 
-    def __init__(self, cluster_model=None, config_docs=None, build_dir=None, backup_build_dir=None):
+    def __init__(self, cluster_model=None, config_docs=None, build_dir=None, backup_build_dir=None, skip_copy_resource=False, flow_control=None):
         super().__init__(__name__)
         self.cluster_model = cluster_model
         self.config_docs = config_docs
         self.build_dir = build_dir
         self.backup_build_dir = backup_build_dir
         self.ansible_command = AnsibleCommand()
+        self.skip_copy_resource = skip_copy_resource
+        self.flow_control = flow_control
 
     def __enter__(self):
         super().__enter__()
@@ -39,7 +41,16 @@ class AnsibleRunner(Step):
         else:
             return os.path.join(get_ansible_path_for_build(self.build_dir), f'{name}.yml')
 
+    def is_skip_task(self, task):
+        if self.flow_control is not None and task in self.flow_control.skip_task:
+            return True
+        return False
+
     def copy_resources(self):
+        if self.skip_copy_resource:
+            self.logger.info('Skipping copy ansible resources')
+            return
+
         self.logger.info('Copying Ansible resources')
         if self.cluster_model != None:
             ansible_dir = get_ansible_path(self.cluster_model.specification.name)
@@ -64,17 +75,20 @@ class AnsibleRunner(Step):
         self.ansible_command.run_playbook_with_retries(inventory=inventory_path,
                                                        playbook_path=self.playbook_path('preflight'),
                                                        retries=1)
-
-        self.logger.info('Setting up repository for cluster provisioning. This will take a while...')
-        self.ansible_command.run_playbook_with_retries(inventory=inventory_path,
-                                                       playbook_path=self.playbook_path('repository_setup'),
-                                                       retries=1)
+        if not self.is_skip_task('repository_setup'):
+            self.logger.info('Setting up repository for cluster provisioning. This will take a while...')
+            self.ansible_command.run_playbook_with_retries(inventory=inventory_path,
+                                                        playbook_path=self.playbook_path('repository_setup'),
+                                                        retries=1)
 
         self.ansible_command.run_playbook(inventory=inventory_path,
                                           playbook_path=self.playbook_path('common'))    
 
 
-    def post_flight(self, inventory_path):                                          
+    def post_flight(self, inventory_path):   
+        if self.is_skip_task('repository_teardown'):
+            self.logger.info('skipping repository teardown')
+            return                                       
         self.ansible_command.run_playbook(inventory=inventory_path,
                                           playbook_path=self.playbook_path('repository_teardown'))  
 
@@ -100,8 +114,12 @@ class AnsibleRunner(Step):
         # run roles
         enabled_roles = inventory_creator.get_enabled_roles()
         for role in enabled_roles:
-            self.ansible_command.run_playbook(inventory=inventory_path,
-                                              playbook_path=self.playbook_path(to_role_name(role)), vault_file=Config().vault_password_location)
+            if not self.is_skip_task(role):
+                self.logger.info('Doing {} role'.format(role))
+                 self.ansible_command.run_playbook(inventory=inventory_path,
+                                                   playbook_path=self.playbook_path(to_role_name(role)), vault_file=Config().vault_password_location)
+            else:
+                self.logger.info('Skipping {} role'.format(role))
 
         #post-flight after we are done
         self.post_flight(inventory_path)

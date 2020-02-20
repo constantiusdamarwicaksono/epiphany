@@ -1,7 +1,7 @@
 import os
 
 from cli.helpers.Step import Step
-from cli.helpers.doc_list_helpers import select_single
+from cli.helpers.doc_list_helpers import select_single, select_first
 from cli.helpers.build_saver import save_manifest
 from cli.helpers.yaml_helpers import safe_load_all
 from cli.helpers.Log import Log
@@ -18,7 +18,9 @@ class BuildEngine(Step):
     def __init__(self, input_data):
         self.file = input_data.file
         self.skip_infrastructure = input_data.no_infra if hasattr(input_data, 'no_infra') else False
+        self.skip_copy_resource =  input_data.no_copy_resources if hasattr(input_data, 'no_copy_resources') else False
         self.logger = Log(__name__)
+        self.flow_control = None
 
         self.cluster_model = None
         self.input_docs = []
@@ -39,6 +41,13 @@ class BuildEngine(Step):
             path_to_load = os.path.join(os.getcwd(), self.file)
         user_file_stream = open(path_to_load, 'r')
         self.input_docs = safe_load_all(user_file_stream)
+
+        self.flow_control = select_first(self.input_docs, lambda x : x.kind=='flow-control')
+        if self.flow_control is not None:
+            try:
+                self.flow_control.skip_task = [] if self.flow_control.skip_task is None else self.flow_control.skip_task
+            except AttributeError:
+                self.flow_control.skip_task = []
 
         # Merge the input docs with defaults
         with DefaultMerger(self.input_docs) as doc_merger:
@@ -115,7 +124,7 @@ class BuildEngine(Step):
         save_manifest(docs, self.cluster_model.specification.name)   
 
         # Run Ansible to provision infrastructure
-        with AnsibleRunner(self.cluster_model, docs) as ansible_runner:
+        with AnsibleRunner(self.cluster_model, docs, skip_copy_resource=self.skip_copy_resource, flow_control=self.flow_control) as ansible_runner:
             ansible_runner.apply()
 
         return 0

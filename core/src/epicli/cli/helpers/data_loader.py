@@ -12,11 +12,16 @@ BASE_DIR = os.path.dirname(__file__)
 #TODO: Look at this in depth since by default sys.prefix should return /urs/local
 DATA_FOLDER_PATH_SYSTEM = os.path.join(sys.prefix, 'local/epicli/data').replace('local/local', 'local')
 DATA_FOLDER_PATH_LOCAL = os.path.join(BASE_DIR, '../../data')
+DATA_FOLDER_PATH_VENV = os.path.join(sys.prefix, 'epicli/data')
+
 DATA_FOLDER_PATH = (
     DATA_FOLDER_PATH_SYSTEM
     if os.path.exists(DATA_FOLDER_PATH_SYSTEM)
     else DATA_FOLDER_PATH_LOCAL
 )
+
+if not os.path.exists(DATA_FOLDER_PATH) and "virtualenv" in sys.prefix:
+    DATA_FOLDER_PATH = (DATA_FOLDER_PATH_VENV)
 
 Types = namedtuple('FileType', 'DEFAULT VALIDATION TERRAFORM ANSIBLE')
 types = Types(DEFAULT='defaults',

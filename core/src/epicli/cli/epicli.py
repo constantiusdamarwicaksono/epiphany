@@ -128,6 +128,8 @@ def apply_parser(subparsers):
                             help='Path to the folder with pre-prepared offline requirements.')    
     sub_parser.add_argument('--vault-password', dest='vault_password', type=str,
                             help='Password that will be used to encrypt build artifacts.')
+    sub_parser.add_argument('--no-copy-res', dest='no_copy_resources', action='store_true',
+                            help='[USE WITH CAUTION] do not copy ansible task files')
 
     def run_apply(args):
         adjust_paths_from_file(args)

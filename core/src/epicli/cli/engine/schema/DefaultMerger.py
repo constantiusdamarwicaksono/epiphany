@@ -14,11 +14,12 @@ class DefaultMerger(Step):
         merged_docs = []
 
         for doc in self.docs:
-            files_with_defaults = load_all_yaml_objs(types.DEFAULT, doc.provider, doc.kind)
-            self.logger.info('Merging: ' + doc.kind+' name: '+doc.name)
-            merged = self.merge_parent(files_with_defaults, doc)
-            merged_docs.append(merged)
-
+            if doc.kind != 'flow-control':
+                files_with_defaults = load_all_yaml_objs(types.DEFAULT, doc.provider, doc.kind)
+                self.logger.info('Merging: ' + doc.kind+' name: '+doc.name)
+                merged = self.merge_parent(files_with_defaults, doc)
+                merged_docs.append(merged)
+ 
         return merged_docs
 
     def merge_parent(self, files, doc):
