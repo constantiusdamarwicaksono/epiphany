@@ -80,9 +80,9 @@ class AnsibleRunner(Step):
             self.ansible_command.run_playbook_with_retries(inventory=inventory_path,
                                                         playbook_path=self.playbook_path('repository_setup'),
                                                         retries=1)
-
-        self.ansible_command.run_playbook(inventory=inventory_path,
-                                          playbook_path=self.playbook_path('common'))    
+        if not self.is_skip_task('common'):
+            self.ansible_command.run_playbook(inventory=inventory_path,
+                                            playbook_path=self.playbook_path('common'))    
 
 
     def post_flight(self, inventory_path):   
@@ -116,7 +116,7 @@ class AnsibleRunner(Step):
         for role in enabled_roles:
             if not self.is_skip_task(role):
                 self.logger.info('Doing {} role'.format(role))
-                 self.ansible_command.run_playbook(inventory=inventory_path,
+                self.ansible_command.run_playbook(inventory=inventory_path, 
                                                    playbook_path=self.playbook_path(to_role_name(role)), vault_file=Config().vault_password_location)
             else:
                 self.logger.info('Skipping {} role'.format(role))

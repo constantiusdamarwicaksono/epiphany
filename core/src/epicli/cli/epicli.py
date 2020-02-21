@@ -96,6 +96,7 @@ def main():
     except Exception as e:
         logger = Log('epicli')
         logger.error(e, exc_info=config.debug)
+        print(sys.exc_info())
         return 1
 
 
