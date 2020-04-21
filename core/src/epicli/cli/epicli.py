@@ -4,20 +4,27 @@ import sys
 import argparse
 import json
 import os
+import time
+import json
+import subprocess
+import platform
+import socket
 
-from cli.engine.BuildEngine import BuildEngine
+from cli.engine.ApplyEngine import ApplyEngine
 from cli.engine.PatchEngine import PatchEngine
 from cli.engine.DeleteEngine import DeleteEngine
 from cli.engine.InitEngine import InitEngine
 from cli.engine.PrepareEngine import PrepareEngine
 from cli.engine.UpgradeEngine import UpgradeEngine
+from cli.engine.TestEngine import TestEngine
 from cli.helpers.Log import Log
 from cli.helpers.Config import Config
 from cli.version import VERSION
 from cli.licenses import LICENSES
 from cli.helpers.query_yes_no import query_yes_no
 from cli.helpers.input_query import prompt_for_password
-from cli.helpers.build_saver import save_to_file
+from cli.helpers.build_saver import save_to_file, get_output_path
+from cli.engine.spec.SpecCommand import SpecCommand
 
 
 def main():
@@ -25,7 +32,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         usage='''epicli <command> [<args>]''',
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=argparse.RawTextHelpFormatter)
 
     # setup some root arguments
     parser.add_argument('--version', action='version', help='Shows the CLI version', version=VERSION)
@@ -45,12 +52,32 @@ def main():
     parser.add_argument('--validate-certs', choices=['true', 'false'], default='true', action='store',
                         dest='validate_certs',
                         help='''[Experimental]: Disables certificate checks for certain Ansible operations
-                         which might have issues behind proxies (https://github.com/ansible/ansible/issues/32750). 
-                         Should NOT be used in production for security reasons.''')
-    parser.add_argument('--debug', dest='debug', action="store_true",
-                        help='Set this to output extensive debug information. Carries over to Ansible and Terraform.')
+which might have issues behind proxies (https://github.com/ansible/ansible/issues/32750). 
+Should NOT be used in production for security reasons.''')
     parser.add_argument('--auto-approve', dest='auto_approve', action="store_true",
                         help='Auto approve any user input queries asked by Epicli')
+
+    # set debug verbosity level.
+    def debug_level(x):
+        x = int(x)
+        if x < 0 or x > 4:
+            raise argparse.ArgumentTypeError("--debug value should be between 0 and 4")
+        return x
+    parser.add_argument('--debug', dest='debug', type=debug_level,
+                        help='''Set this flag (0..4) to enable debug output where 0 is no
+debug output and 1..4 is debug output with different verbosity levels:
+Python    : Anything heigher then 0 enables printing of Python stacktraces
+Ansible   : 1..4 map to following Ansible verbosity levels:
+            1: -v
+            2: -vv
+            3: -vvv
+            4: -vvvv
+Terraform : 1..4 map to the following Terraform verbosity levels:
+            1: WARN
+            2: INFO
+            3: DEBUG
+            4: TRACE''')
+
     # some arguments we don't want available when running from the docker image.
     if not config.docker_cli:
         parser.add_argument('-o', '--output', dest='output_dir', type=str,
@@ -58,14 +85,18 @@ def main():
 
     # setup subparsers
     subparsers = parser.add_subparsers()
-    apply_parser(subparsers)
-    validate_parser(subparsers)
+    prepare_parser(subparsers)
     init_parser(subparsers)
+    apply_parser(subparsers)
     upgrade_parser(subparsers)
+    delete_parser(subparsers)
+    test_parser(subparsers)
+
+    '''
+    validate_parser(subparsers)
     backup_parser(subparsers)
     recovery_parser(subparsers)
-    delete_parser(subparsers)
-    prepare_parser(subparsers)
+    '''
 
     # check if there were any variables and display full help
     if len(sys.argv) < 2:
@@ -95,8 +126,8 @@ def main():
         return args.func(args)
     except Exception as e:
         logger = Log('epicli')
-        logger.error(e, exc_info=config.debug)
-        print(sys.exc_info())
+        logger.error(e, exc_info=(config.debug > 0))
+        dump_debug_info()
         return 1
 
 
@@ -112,11 +143,24 @@ def init_parser(subparsers):
 
     def run_init(args):
         Config().output_dir = os.getcwd()
-        dump_config(Config())
+
         with InitEngine(args) as engine:
             return engine.init()
 
     sub_parser.set_defaults(func=run_init)
+
+
+def prepare_parser(subparsers):
+    sub_parser = subparsers.add_parser('prepare', description='Creates a folder with all prerequisites to setup the offline requirements to install a cluster offline.')
+    sub_parser.add_argument('--os', type=str, required=True, dest='os', choices=['ubuntu-18.04', 'redhat-7', 'centos-7'],
+                            help='The OS to prepare the offline requirements for: ubuntu-18.04|redhat-7|centos-7')
+
+    def run_prepare(args):
+        adjust_paths_from_output_dir()
+        with PrepareEngine(args) as engine:
+            return engine.prepare()
+
+    sub_parser.set_defaults(func=run_prepare)       
 
 
 def apply_parser(subparsers):
@@ -141,25 +185,10 @@ def apply_parser(subparsers):
     def run_apply(args):
         adjust_paths_from_file(args)
         ensure_vault_password_is_set(args)
-        with BuildEngine(args) as engine:
+        with ApplyEngine(args) as engine:
             return engine.apply()
 
     sub_parser.set_defaults(func=run_apply)
-
-
-def validate_parser(subparsers):
-    sub_parser = subparsers.add_parser('verify', description='Validates the configuration from file by executing a dry '
-                                                             'run without changing the physical '
-                                                             'infrastructure/configuration')
-    sub_parser.add_argument('-f', '--file', dest='file', type=str,
-                            help='File with infrastructure/configuration definitions to use.')
-
-    def run_validate(args):
-        adjust_paths_from_file(args)
-        with BuildEngine(args) as engine:
-            return engine.validate()
-
-    sub_parser.set_defaults(func=run_validate)
 
 
 def delete_parser(subparsers):
@@ -195,6 +224,38 @@ def upgrade_parser(subparsers):
     sub_parser.set_defaults(func=run_upgrade)
 
 
+def test_parser(subparsers):
+    sub_parser = subparsers.add_parser('test', description='Test a cluster from build artifacts.')
+    sub_parser.add_argument('-b', '--build', dest='build_directory', type=str, required=True,
+                            help='Absolute path to directory with build artifacts.')
+    sub_parser.add_argument('-g', '--group', choices=['all'] + SpecCommand.get_spec_groups(), default='all', action='store', dest='group',  required=False,
+                            help='Group of tests to be run, e.g. kafka.')
+
+    def run_test(args):
+        experimental_query()
+        adjust_paths_from_build(args)
+        with TestEngine(args) as engine:
+            return engine.test()
+
+    sub_parser.set_defaults(func=run_test)
+
+
+'''
+def validate_parser(subparsers):
+    sub_parser = subparsers.add_parser('verify', description='Validates the configuration from file by executing a dry '
+                                                             'run without changing the physical '
+                                                             'infrastructure/configuration')
+    sub_parser.add_argument('-f', '--file', dest='file', type=str,
+                            help='File with infrastructure/configuration definitions to use.')
+
+    def run_validate(args):
+        adjust_paths_from_file(args)
+        with ApplyEngine(args) as engine:
+            return engine.validate()
+
+    sub_parser.set_defaults(func=run_validate)    
+
+
 def backup_parser(subparsers):
     sub_parser = subparsers.add_parser('backup',
                                        description='[Experimental]: Backups existing Epiphany Platform components.')
@@ -222,19 +283,7 @@ def recovery_parser(subparsers):
             return engine.recovery()
 
     sub_parser.set_defaults(func=run_recovery)
-
-
-def prepare_parser(subparsers):
-    sub_parser = subparsers.add_parser('prepare', description='Creates a folder with all prerequisites to setup the offline requirements to install a cluster offline.')
-    sub_parser.add_argument('--os', type=str, required=True, dest='os',
-                            help='The OS to prepare the offline requirements for.')
-
-    def run_prepare(args):
-        adjust_paths_from_output_dir()
-        with PrepareEngine(args) as engine:
-            return engine.prepare()
-
-    sub_parser.set_defaults(func=run_prepare)   
+'''
 
 
 def experimental_query():
@@ -245,7 +294,6 @@ def experimental_query():
 def adjust_paths_from_output_dir():
     if not Config().output_dir:
         Config().output_dir = os.getcwd()  # Default to working dir so we can at least write logs.
-    dump_config(Config())
 
 
 def adjust_paths_from_file(args):
@@ -256,7 +304,6 @@ def adjust_paths_from_file(args):
         raise Exception(f'File "{args.file}" does not exist')
     if Config().output_dir is None:
         Config().output_dir = os.path.join(os.path.dirname(args.file), 'build')
-    dump_config(Config())
 
 
 def adjust_paths_from_build(args):
@@ -269,14 +316,6 @@ def adjust_paths_from_build(args):
         args.build_directory = args.build_directory.rstrip('/')
     if Config().output_dir is None:
         Config().output_dir = os.path.split(args.build_directory)[0]
-    dump_config(Config())
-
-
-def dump_config(config):
-    logger = Log('config')
-    for attr in config.__dict__:
-        if attr.startswith('_'):
-            logger.info('%s = %r' % (attr[1:], getattr(config, attr)))
 
 def ensure_vault_password_is_set(args):
     vault_password = args.vault_password 
@@ -287,12 +326,81 @@ def ensure_vault_password_is_set(args):
     os.makedirs(directory_path, exist_ok=True)
     save_to_file(Config().vault_password_location, vault_password)
 
+
 def ensure_vault_password_is_cleaned():
     if os.path.exists(Config().vault_password_location):
         os.remove(Config().vault_password_location)
 
+
 def exit_handler():
     ensure_vault_password_is_cleaned()
+
+
+def dump_debug_info():
+    def dump_external_debug_info(title, args):
+        dump_file.write(f'\n\n*****{title}******\n')
+        p = subprocess.Popen(args, stdout=subprocess.PIPE)
+        out, err = p.communicate()
+        lines = filter(lambda x: x.strip(), out.decode("utf-8").splitlines(keepends=True))
+        dump_file.writelines(lines)
+
+    try:
+        logger = Log('dump_debug_info')
+        config = Config()
+
+        timestr = time.strftime("%Y%m%d-%H%M%S")
+        dump_path = os.getcwd() + f'/epicli_error_{timestr}.dump'
+        dump_file = open(dump_path, 'w') 
+
+        dump_file.write('*****EPICLI VERSION******\n')
+        dump_file.write(f'{VERSION}')
+
+        dump_file.write('\n\n*****EPICLI ARGS******\n')
+        dump_file.write(' '.join([*['epicli'], *sys.argv[1:]]))        
+
+        dump_file.write('\n\n*****EPICLI CONFIG******\n')
+        for attr in config.__dict__:
+            if attr.startswith('_'):
+                dump_file.write('%s = %r\n' % (attr[1:], getattr(config, attr)))
+
+        dump_file.write('\n\n*****SYSTEM******\n')      
+        system_data = {
+            'platform':platform.system(),
+            'release':platform.release(),
+            'type': platform.uname().system,
+            'arch': platform.uname().machine,
+            'cpus': json.dumps(os.cpu_count()),
+            'hostname': socket.gethostname()
+        }
+        dump_file.write(json.dumps(dict(system_data), indent=2))
+
+        dump_file.write('\n\n*****ENVIROMENT VARS******\n')
+        dump_file.write(json.dumps(dict(os.environ), indent=2))
+
+        dump_file.write('\n\n*****PYTHON******\n')
+        dump_file.write(f'python_version: {platform.python_version()}\n') 
+        dump_file.write(f'python_build: {platform.python_build()}\n')  
+        dump_file.write(f'python_revision: {platform.python_revision()}\n')
+        dump_file.write(f'python_compiler: {platform.python_compiler()}\n')    
+        dump_file.write(f'python_branch: {platform.python_branch()}\n')    
+        dump_file.write(f'python_implementation: {platform.python_implementation()}\n')  
+
+        dump_external_debug_info('ANSIBLE VERSION', ['ansible', '--version'])
+        dump_external_debug_info('ANSIBLE CONFIG', ['ansible-config', 'dump'])
+        dump_external_debug_info('ANSIBLE-VAULT VERSION', ['ansible-vault', '--version'])
+        dump_external_debug_info('TERRAFORM VERSION', ['terraform', '--version'])
+        dump_external_debug_info('SKOPEO VERSION', ['skopeo', '--version'])
+        dump_external_debug_info('RUBY VERSION', ['ruby', '--version'])
+        dump_external_debug_info('RUBY GEM VERSION', ['gem', '--version'])
+        dump_external_debug_info('RUBY INSTALLED GEMS', ['gem', 'query', '--local'])
+
+        dump_file.write('\n\n*****LOG******\n')
+        log_path = os.path.join(get_output_path(), config.log_file)
+        dump_file.writelines([l for l in open(log_path).readlines()]) 
+    finally:
+        dump_file.close()
+        logger.info(f'Error dump has been written to: {dump_path}')
+        logger.warning('This dump might contain sensitive information. Check before sharing.')
 
 if __name__ == '__main__':
     atexit.register(exit_handler)

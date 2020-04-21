@@ -1,11 +1,10 @@
 ---
-
 - name: Install Storage packages
   package:
     name: "{{ item }}"
-    update_cache: yes
+    update_cache: true
     state: present
-  with_items:
+  loop:
     - cifs-utils
     - samba-client
     - samba-common

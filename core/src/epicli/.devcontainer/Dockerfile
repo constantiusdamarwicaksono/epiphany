@@ -17,15 +17,15 @@ RUN chmod +x /config-pre.sh \
     && apt-get update \
     && apt-get -y install --no-install-recommends apt-utils dialog 2>&1 \
 
-    && apt-get -y install git procps lsb-release gcc make musl-dev libffi-dev tar unzip \
+    && apt-get -y install git procps lsb-release gcc make musl-dev libffi-dev tar unzip vim \
 
     && apt-get -y install ruby-full \
 
     && gem install serverspec rake rspec_junit_formatter \
 
-    && pip --disable-pip-version-check --no-cache-dir install pylint pytest wheel setuptools twine --default-timeout=100 \
-
     && pip --disable-pip-version-check --no-cache-dir install -r /requirements.txt --default-timeout=100 \
+
+    && pip --disable-pip-version-check --no-cache-dir install pylint pytest wheel setuptools twine --default-timeout=100 \
 
     && groupadd --gid $USER_GID $USERNAME \
     && useradd -s /bin/bash --uid $USER_UID --gid $USER_GID -m $USERNAME \

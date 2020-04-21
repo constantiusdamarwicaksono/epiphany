@@ -41,3 +41,5 @@ specification:
     - name: Ubuntu
       comparison_operator: "=="
       version: 18.04
+  use_ha_control_plane: False
+  promote_to_ha: False

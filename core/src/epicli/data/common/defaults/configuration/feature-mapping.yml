@@ -69,6 +69,7 @@ specification:
     logging:
       - logging
       - kibana
+      - node-exporter
       - filebeat
       - firewall
     load_balancer:
@@ -114,11 +115,6 @@ specification:
       - kubernetes-master
       - repository
       - applications
-      - node-exporter
-      - filebeat
-      - firewall
-    kubernetes_node_ha:
-      - kubernetes-node
       - node-exporter
       - filebeat
       - firewall

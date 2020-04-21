@@ -338,7 +338,7 @@ Prerequisites: Epiphany Kubernetes cluster
 
 ## How to run epicli with password
 
-Epiphany encrypts Kubernetes artifacts (access tokens) stored in Epiphany build directory. In order to achieve it, user is asked for password which will be used for encryption and decryption of artifacts. Remember to enter the same password for the same cluster - if password will not be the same, epicli will not be able to decrypt secrets. 
+Epiphany encrypts Kubernetes artifacts (access tokens) stored in Epiphany build directory. In order to achieve it, user is asked for password which will be used for encryption and decryption of artifacts. Remember to enter the same password for the same cluster - if password will not be the same, epicli will not be able to decrypt secrets.
 
 Standard way of executing epicli has not been changed:
 
@@ -356,4 +356,14 @@ When running epicli from CI pipeline you can use new parameter for epicli:
 
 ```shell
 epicli apply -f demo.yaml --vault-password MYPWD
+```
+
+## How to enable kubectl on Kubernetes master
+
+For security reasons kubectl is disabled by default on the Kubernetes master node. To enable it execute the following commands:
+
+```shell
+cp /etc/kubernetes/admin.conf $HOME/
+chown $(id -u):$(id -g) $HOME/admin.conf
+export KUBECONFIG=$HOME/admin.conf
 ```

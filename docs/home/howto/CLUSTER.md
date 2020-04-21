@@ -240,7 +240,26 @@ To setup the cluster do the following steps from the provisioning machine:
 
     The [region](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.RegionsAndAvailabilityZones.html) lets you chose the most optimal place to deploy your cluster. The `subscription_name` is the Azure subscribtion under which you want to deploy the cluster.
 
-    Terraform will ask you to sign in to your Microsoft Azure subscibtion when it prepares to build/modify/destroy the infrastructure on `azure`. In case you need to share cluster managment with other people you can set the `use_service_principal` tag to true. This will create a service principle and uses it to manage the resources.
+    Terraform will ask you to sign in to your Microsoft Azure subscibtion when it prepares to build/modify/destroy the infrastructure on `azure`. In case you need to share cluster managment with other people you can set the `use_service_principal` tag to true. This will create a service principle and uses it to manage the resources. 
+
+    If you already have a service principle and don't want to create a new one you can do the following. Make sure the `use_service_principal` tag is set to true. Then before you run `epicli apply -f yourcluster.yml` create the following folder structure from the path you are running Epicli:
+
+    ```shell
+    /build/clustername/terraform
+    ```
+
+    Where the clustername is the name you specified under `specification.name` in your cluster yaml. Then in the terraform folder add the file named `sp.yml` and fill it with the service priciple information like so:
+
+    ```yaml
+    appId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxx"
+    displayName: "app-name"
+    name: "http://app-name"
+    password: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxx"
+    tenant: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxx"
+    subscriptionId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxx"
+    ```
+
+    Epicli will read this file and automaticly use it for authentication for resource creation and management.
 
     For both `aws`and `azure` there is a `use_public_ips` tag. When this is true the VM's will also have a direct inferface to the internet. While this is easy for setting up a cluster for testing it should not be used in production. A VPN setup should be used which we will document in a different section (TODO).
 
@@ -284,7 +303,123 @@ From the defined cluster build folder it will take the information needed to rem
 
 ## Single machine cluster
 
-TODO
+Sometimes it might be desirable to run an Epiphany cluster on a single machine. For this purpose Epiphany ships with a `single_cluster` component configuration. This cluster comes with the following main components:
+
+- kubernetes-master: Untainted so pods can be deployed on it
+- rabbitmq: Rabbitmq for messaging instead of Kafka
+- applications: For deploying the Keycloak authentication service
+- postgresql: To provide a database for Keycloak
+
+Note that components like logging and monitoring are missing since they do not provide much benefit in a single machine scenario. Also RabbitMQ is included over Kafka since that is much less resource intensive.
+
+To get started with a single machine cluster you can use the following template as a base. Note that some configurations are omitted:
+
+```yaml
+kind: epiphany-cluster
+title: Epiphany cluster Config
+name: default
+specification:
+  prefix: dev
+  name: single
+  admin_user:
+    name: operations
+    key_path: /user/.ssh/id_rsa
+  cloud:
+    ... # add other cloud configuration as needed
+  components:
+    kubernetes_master:
+      count: 0
+    kubernetes_node:
+      count: 0
+    logging:
+      count: 0
+    monitoring:
+      count: 0
+    kafka:
+      count: 0
+    postgresql:
+      count: 0
+    load_balancer:
+      count: 0
+    rabbitmq:
+      count: 0
+    ignite:
+      count: 0
+    opendistro_for_elasticsearch:
+      count: 0
+    single_machine:
+      count: 1
+---
+kind: configuration/applications
+title: "Kubernetes Applications Config"
+name: default
+specification:
+  applications:
+  - name: auth-service
+    enabled: yes # set to yest to enable authentication service
+    ... # add other authentication service configuration as needed
+
+## How to create custom cluster components
+
+Epiphany gives you the ability to define custom components. This allows you define a custom set of roles for a component you want to use in your cluster and can be usefull when you for example want to maximize usage of the available machines you have at your disposal.
+
+The first thing you will need to do is define it in the `configuration/feature-mapping` configuration. To get this configuration you can run `epicli init ... --full` command. In the `available_roles` roles section you can see all the available roles that Epiphany provides. The `roles_mapping` is where all the Epiphany components are defined and were you need to add your custom components.
+
+Below are parts of an example `configuration/feature-mapping` were we define an new `single_machine_new` component. We want to use Kafka instead of RabbitMQ and don`t need applications and postgress since we dont want a Keycloak deployment:
+
+```yaml
+kind: configuration/feature-mapping
+title: Feature mapping to roles
+name: default
+specification:
+  available_roles: # All entries here represent the available roles within Epiphany
+  - name: repository
+    enabled: yes
+  - name: firewall
+    enabled: yes
+  - name: image-registry
+  ...
+  roles_mapping: # All entries here represent the default components provided with Epiphany
+  ...
+    single_machine:
+    - repository
+    - image-registry
+    - kubernetes-master
+    - applications
+    - rabbitmq
+    - postgresql
+    - firewall
+    # Below is the new single_machine_new definition
+    single_machine_new:
+    - repository
+    - image-registry
+    - kubernetes-master
+    - kafka
+    - firewall
+  ...
+```
+
+Once defined the new `single_machine_new` can be used inside the `epiphany-cluster` configuration:
+
+```yaml
+kind: epiphany-cluster
+title: Epiphany cluster Config
+name: default
+specification:
+  prefix: new
+  name: single
+  admin_user:
+    name: operations
+    key_path: /user/.ssh/id_rsa
+  cloud:
+    ... # add other cloud configuration as needed
+  components:
+    ... # other components as needed
+    single_machine_new:
+      count: x
+```
+
+*Note: After defining a new component you might also need to define aditional configurations for virtual machines and security rules depending on what you are trying to achieve.*
 
 ## How to scale or cluster components
 
@@ -311,7 +446,7 @@ Then when applying the changed configuration using Epicli additional VM's will b
       is_clustered: true
   ...
   ```
-- postgresql: When changed this will setup or remove additional nodes for Postgresql. Note that extra nodes can only be setup todo replication by adding the following additional `configuration/postgresql` configuration:
+- postgresql: When changed this will setup or remove additional nodes for Postgresql. Note that extra nodes can only be setup to do replication by adding the following additional `configuration/postgresql` configuration:
 
   ```yaml
   kind: configuration/postgresql
@@ -327,6 +462,84 @@ Then when applying the changed configuration using Epicli additional VM's will b
   ```
 
 Changing the count for other predefined components will spawn additional machines or remove VM's 
+
+## Multi master cluster
+
+Epiphany can deploy [HA Kubernetes clusters](../../design-docs/kubernetes-ha/kubernetes-ha.md) (since v0.6). To achieve that, it is required that:
+
+- the master count must be higher than 1 (proper values should be 1, 3, 5, 7):
+
+  ```yaml
+  kubernetes_master:
+    count: 3
+  ```
+
+- the HA mode must be enabled in `configuration/shared-config`:
+
+  ```yaml
+  kind: configuration/shared-config
+  ...
+  specification:
+    use_ha_control_plane: true
+    promote_to_ha: false
+  ```
+
+- the regular epcli apply cycle must be executed
+
+Epiphany can promote / convert older single-master clusters to HA mode (since v0.6). To achieve that, it is required that:
+
+- the existing cluster is legacy single-master cluster
+
+- the existing cluster has been [upgraded](UPGRADE.md) to Kubernetes 1.17 first
+
+- the HA mode and HA promotion must be enabled in `configuration/shared-config`:
+
+  ```yaml
+  kind: configuration/shared-config
+  ...
+  specification:
+    use_ha_control_plane: true
+    promote_to_ha: true
+  ```
+
+- the regular epcli apply cycle must be executed
+
+- since it is one-time operation, after successful promotion, the HA promotion must be disabled in the config:
+
+  ```yaml
+  kind: configuration/shared-config
+  ...
+  specification:
+    use_ha_control_plane: true
+    promote_to_ha: false
+  ```
+
+<em>Note: it is not supported yet to reverse HA promotion.</em>
+
+Epiphany can scale-up existing HA clusters (including ones that were promoted). To achieve that, it is required that:
+
+- the existing cluster must be already running in HA mode
+
+- the master count must be higher than previous value (proper values should be 3, 5, 7):
+
+  ```yaml
+  kubernetes_master:
+    count: 5
+  ```
+
+- the HA mode must be enabled in `configuration/shared-config`:
+
+  ```yaml
+  kind: configuration/shared-config
+  ...
+  specification:
+    use_ha_control_plane: true
+    promote_to_ha: false
+  ```
+
+- the regular epcli apply cycle must be executed
+
+<em>Note: it is not supported yet to scale-down clusters (master count cannot be decreased).</em>
 
 ## Build artifacts
 
